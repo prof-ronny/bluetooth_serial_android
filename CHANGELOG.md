@@ -1,3 +1,11 @@
+## 1.1.1
+
+### 🇧🇷 Correções menores
+- Pequenas melhorias na descrição do pacote e documentação.
+
+### 🇺🇸 Minor fixes
+- Minor improvements to package description and documentation
+
 ## 1.1.0
 
 ### 🇧🇷 Novidades
