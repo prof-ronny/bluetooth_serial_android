@@ -1,3 +1,21 @@
+## 1.1.0
+
+### 🇧🇷 Novidades
+- Suporte a **UUID customizado** no método `connect()`.
+- Adicionado parâmetro **`timeoutMs`** em `connect()` para controlar tempo de espera da conexão.
+- Novo método **`readLine(delimiter)`** com buffer interno para leitura por linha.
+- Buffer de leitura é limpo automaticamente ao desconectar.
+- Melhorias internas na lógica de leitura e tratamento de exceções para evitar travamentos.
+
+### 🇺🇸 What's New
+- Added support for **custom UUID** in the `connect()` method.
+- Added **`timeoutMs`** parameter to `connect()` to control connection timeout.
+- New **`readLine(delimiter)`** method with internal buffer for line-based reading.
+- Read buffer is now automatically cleared on disconnect.
+- Internal improvements to reading logic and exception handling to prevent freezes.
+
+
+
 ## 1.0.1
 
 ### 🇧🇷 Correções menores

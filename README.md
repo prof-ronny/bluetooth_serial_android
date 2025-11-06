@@ -12,14 +12,17 @@ Allows listing paired devices, scanning nearby ones, connecting, sending, and re
 ## ✨ Features
 
 * ✅ Android-only (Classic Bluetooth / RFCOMM)
-* ✅ Runtime permission handling (`ensurePermissions`)
+* ✅ Automatic runtime permissions (`ensurePermissions`)
 * ✅ List paired devices
-* ✅ Discover nearby devices (scan)
+* ✅ Scan for nearby devices
 * ✅ RFCOMM connection (default SPP UUID)
-* ✅ Send (`write`) and receive (`read`) data asynchronously
+* ✅ Custom UUID support in `connect()`
+* ✅ Configurable read timeout in `connect()`
+* ✅ Send (`write`) and receive (`read`) async (non-blocking)
+* ✅ Read full lines with `readLine()` and custom delimiter
 * ✅ Example app with continuous reading loop
 * ✅ Compatible with Android 8+ (API 26+)
-* 🧪 Example app included in `example/`
+* 🧪 Example included in `example/`
 
 > iOS not supported (Classic Bluetooth is not exposed by the public Apple API).
 
@@ -72,190 +75,125 @@ At runtime, call `FlutterBluetoothSerial.ensurePermissions()` before scanning or
 
 ## 🚀 Quick Start Example
 
+
+📘 Bluetooth Serial Cookbook (Version S – minimal & practical)
+
+1️⃣ **Permissions**  
+When to use: Always at app startup.
+
 ```dart
-import 'package:flutter/material.dart';
-import 'package:bluetooth_serial_android/bluetooth_serial_android.dart';
+await FlutterBluetoothSerial.ensurePermissions();
+```
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await FlutterBluetoothSerial.ensurePermissions();
-  runApp(const MyApp());
-}
+2️⃣ **List paired devices**
+When to use: Show already paired devices.
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-  @override
-  Widget build(BuildContext context) =>
-      const MaterialApp(debugShowCheckedModeBanner: false, home: DemoPage());
-}
-
-class DemoPage extends StatefulWidget {
-  const DemoPage({super.key});
-  @override
-  State<DemoPage> createState() => _DemoPageState();
-}
-
-class _DemoPageState extends State<DemoPage> {
-  List<Map<String, String>> devices = [];
-  String? connectedAddress;
-  bool connected = false;
-  String buffer = '';
-  String received = '';
-  String lineEnding = '\n';
-  bool _reading = false;
-
-  Future<void> _ensure() async {
-    final ok = await FlutterBluetoothSerial.ensurePermissions();
-    if (!ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Permissions not granted')),
-      );
-    }
-  }
-
-  Future<void> _scan() async {
-    await _ensure();
-    final list = await FlutterBluetoothSerial.scanDevices();
-    setState(() => devices = list);
-  }
-
-  Future<void> _connect(String addr) async {
-    await _ensure();
-    final ok = await FlutterBluetoothSerial.connect(addr);
-    if (ok) {
-      setState(() {
-        connected = true;
-        connectedAddress = addr;
-      });
-      _readLoop();
-    }
-  }
-
-  Future<void> _disconnect() async {
-    await FlutterBluetoothSerial.disconnect();
-    setState(() {
-      connected = false;
-      connectedAddress = null;
-      _reading = false;
-    });
-  }
-
-  Future<void> _send(String text) async {
-    if (!connected) return;
-    await FlutterBluetoothSerial.write(text + lineEnding);
-  }
-
-  Future<void> _readLoop() async {
-    if (_reading) return;
-    _reading = true;
-    while (connected && _reading) {
-      final data = await FlutterBluetoothSerial.read();
-      if (data != null && data.isNotEmpty) {
-        buffer += data;
-        final idx = buffer.indexOf(lineEnding);
-        if (idx != -1) {
-          final msg = buffer.substring(0, idx).trim();
-          buffer = buffer.substring(idx + lineEnding.length);
-          setState(() => received = msg);
-        }
-      }
-      await Future.delayed(const Duration(milliseconds: 50));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Bluetooth Serial Android'),
-        actions: [
-          if (connected)
-            IconButton(onPressed: _disconnect, icon: const Icon(Icons.link_off))
-          else
-            IconButton(onPressed: _scan, icon: const Icon(Icons.refresh)),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView(
-              children: devices.map((d) {
-                final addr = d['address'] ?? '';
-                final isConn = addr == connectedAddress;
-                return ListTile(
-                  title: Text(d['name'] ?? 'Unnamed'),
-                  subtitle: Text(addr),
-                  tileColor: isConn ? Colors.lightBlue.withOpacity(0.25) : null,
-                  onTap: () => _connect(addr),
-                );
-              }).toList(),
-            ),
-          ),
-          const Divider(),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              children: [
-                const Text('Line ending:'),
-                const SizedBox(width: 8),
-                DropdownButton<String>(
-                  value: lineEnding,
-                  items: const [
-                    DropdownMenuItem(value: '\n', child: Text(r'\n')),
-                    DropdownMenuItem(value: '\r', child: Text(r'\r')),
-                    DropdownMenuItem(value: '\r\n', child: Text(r'\r\n')),
-                    DropdownMenuItem(value: '', child: Text('None')),
-                  ],
-                  onChanged: (v) => setState(() => lineEnding = v ?? '\n'),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: TextField(
-              decoration: const InputDecoration(
-                labelText: 'Message',
-                border: OutlineInputBorder(),
-              ),
-              onSubmitted: _send,
-              enabled: connected,
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Text('Received: $received'),
-          ),
-        ],
-      ),
-    );
-  }
+```dart
+final devices = await FlutterBluetoothSerial.getPairedDevices();
+for (final d in devices) {
+  print("${d['name']} - ${d['address']}");
 }
 ```
+
+3️⃣ **Scan + onDeviceFound event**
+When to use: Discover nearby devices.
+
+```dart
+FlutterBluetoothSerial.scanDevices().then((list) {
+  print("Scan finished, found: ${list.length}");
+});
+
+FlutterBluetoothSerial.onDeviceFound.listen((d) {
+  print("Found: ${d['name']} - ${d['address']}");
+});
+```
+
+4️⃣ **Connect (with custom UUID & timeout)**
+When to use: Connect to HC-05, ESP32, printer, etc.
+
+```dart
+final ok = await FlutterBluetoothSerial.connect(
+  "00:22:11:AA:BB:CC",
+  uuid: "00001101-0000-1000-8000-00805F9B34FB",
+  timeoutMs: 300,
+);
+print(ok ? "Connected" : "Failed");
+```
+
+5️⃣ **Send data (write)**
+When to use: Simple command or text.
+
+```dart
+await FlutterBluetoothSerial.write("LED_ON\n");
+```
+
+6️⃣ **Read once (`read()`)**
+When to use: One-time read.
+
+```dart
+final data = await FlutterBluetoothSerial.read();
+print("Received: $data");
+```
+
+7️⃣ **Read line (`readLine()`) with delimiter**
+When to use: When the device sends complete lines.
+
+```dart
+final line = await FlutterBluetoothSerial.readLine("\n");
+print("Line: $line");
+```
+
+8️⃣ **Simple read loop**
+When to use: Continuous monitoring.
+
+```dart
+bool reading = true;
+while (reading) {
+  final data = await FlutterBluetoothSerial.read();
+  if (data != null) print(">> $data");
+  await Future.delayed(const Duration(milliseconds: 50));
+}
+```
+
+9️⃣ **Disconnect**
+When to use: End session.
+
+```dart
+await FlutterBluetoothSerial.disconnect();
+print("Disconnected");
+```
+
+
 
 ---
 
 ## 🛠️ Plugin API
 
-| Method                                                 | Description                                                   |
-| ------------------------------------------------------ | ------------------------------------------------------------- |
-| `Future<bool> ensurePermissions()`                     | Checks and requests Bluetooth/Location permissions if needed. |
-| `Future<List<Map<String, String>>> getPairedDevices()` | Returns a list of paired devices (`name`, `address`).         |
-| `Future<List<Map<String, String>>> scanDevices()`      | Scans for nearby devices and emits `onDeviceFound` events.    |
-| `Future<bool> connect(String address)`                 | Connects via RFCOMM/Serial using the default SPP UUID.        |
-| `Future<void> disconnect()`                            | Disconnects from the current device.                          |
-| `Future<void> write(String message)`                   | Sends data asynchronously.                                    |
-| `Future<String?> read()`                               | Reads available data asynchronously. Returns `null` if none.  |
+| Method                                                                 | Description                                                                                   |
+|------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
+| `Future<bool> ensurePermissions()`                                     | Checks and requests Bluetooth/Location permissions if needed.                                 |
+| `Future<List<Map<String, String>>> getPairedDevices()`                 | Returns a list of paired devices (`name`, `address`).                                         |
+| `Future<List<Map<String, String>>> scanDevices()`                      | Scans for nearby devices and returns the list found.                                          |
+| `Future<bool> connect(String address, {String uuid, int timeoutMs})`   | Connects using RFCOMM/Serial. Supports custom UUID and read timeout.                          |
+| `Future<void> disconnect()`                                            | Disconnects from the current device and clears buffers.                                       |
+| `Future<void> write(String message)`                                   | Sends data asynchronously (non-blocking).                                                     |
+| `Future<String?> read()`                                               | Reads up to 1024 bytes asynchronously. Returns `null` on timeout or no data.                  |
+| `Future<String?> readLine([String delimiter = '\n'])`                  | Reads until a full line (based on the delimiter) is received. Returns `null` on timeout.      |
 
 ---
 
 ## 📚 Best Practices
 
-* Use delimiters (`\n`, `\r`, `\r\n`) to identify message endings.
-* Always call `ensurePermissions()` before scanning or connecting.
-* Make sure Bluetooth is enabled before scanning.
-* Avoid reading on the UI thread.
-* Stop reading loops when disconnecting.
+* Always call `ensurePermissions()` before using `scan()` or `connect()` (the plugin will request permissions automatically when needed, but calling it at app startup is recommended).
+* Prefer using delimiter-based reading with `readLine()` when possible — it reduces the need to manually manage incoming buffer fragments.
+* If using `read()` in a loop, include a small delay (e.g., 30–80ms) to avoid high CPU usage.
+* Use delimiters (`\n`, `\r`, or `\r\n`) to detect complete messages from the device.
+* If your device uses a custom UUID instead of the default SPP UUID, pass the custom UUID when calling `connect()`.
+* Adjust the `timeoutMs` in `connect()` based on how long the target device typically takes to respond.
+* Always stop any active read loops **before** calling `disconnect()`.
+* Use `disconnect()` to properly clear buffers and close streams.
+* Avoid calling `read()` simultaneously from multiple places — use a single central read loop instead.
+
 
 ---
 
@@ -277,10 +215,15 @@ It reads up to the buffer size (1024 bytes). Use delimiters for message boundari
 
 ## 🧠 Roadmap
 
-* Native `onDataReceived` event stream
-* Configurable `read()` timeout
-* Adjustable buffer size
-* Auto-reconnect feature
+### ✅ Completed
+* Support for custom UUID in `connect()`
+* `readLine(delimiter)` with internal buffer
+* Timeout support in `connect(timeoutMs)`
+
+### 🚧 In Progress / Planned
+* Native `onDataReceived` event stream (no need for manual read loop)
+* Connection status stream (onConnect / onDisconnect events)
+
 
 ---
 
@@ -312,15 +255,18 @@ Permite listar dispositivos pareados, buscar (scan), conectar, enviar e receber 
 
 ## ✨ Recursos
 
-* ✅ Android-only (Bluetooth Clássico / RFCOMM)
-* ✅ Permissões em runtime pelo próprio plugin (`ensurePermissions`)
-* ✅ Listagem de dispositivos pareados
-* ✅ Scan de dispositivos próximos com callback incremental
+* ✅ Somente Android (Bluetooth Clássico / RFCOMM)
+* ✅ Permissões automáticas em runtime (`ensurePermissions`)
+* ✅ Lista dispositivos pareados
+* ✅ Busca dispositivos próximos (scan)
 * ✅ Conexão RFCOMM (UUID SPP padrão)
-* ✅ Envio (`write`) e leitura (`read`) sem travar a UI
-* ✅ Exemplo de leitura contínua (loop no app)
+* ✅ Suporte a UUID customizado no `connect()`
+* ✅ Timeout de leitura configurável no `connect()`
+* ✅ Envio (`write`) e leitura (`read`) assíncrona (não bloqueante)
+* ✅ Leitura de linha com `readLine()` e delimitador customizado
+* ✅ Exemplo com loop contínuo de leitura
 * ✅ Compatível com Android 8+ (API 26+)
-* 🧪 App de exemplo incluído em `example/`
+* 🧪 Exemplo incluído em `example/`
 
 > iOS não suportado (Bluetooth Clássico não é exposto pela API pública da Apple).
 
@@ -373,190 +319,124 @@ Em runtime, chame `FlutterBluetoothSerial.ensurePermissions()` antes de escanear
 
 ## 🚀 Uso rápido
 
+📘 Bluetooth Serial Cookbook (Versão S – mínima e prática)
+
+1️⃣ **Permissões**  
+Quando usar: Sempre ao iniciar o app.
+
 ```dart
-import 'package:flutter/material.dart';
-import 'package:bluetooth_serial_android/bluetooth_serial_android.dart';
+await FlutterBluetoothSerial.ensurePermissions();
+```
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await FlutterBluetoothSerial.ensurePermissions();
-  runApp(const MyApp());
-}
+2️⃣ **Listar pareados**
+Quando usar: Mostrar dispositivos já pareados.
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-  @override
-  Widget build(BuildContext context) =>
-      const MaterialApp(debugShowCheckedModeBanner: false, home: DemoPage());
-}
-
-class DemoPage extends StatefulWidget {
-  const DemoPage({super.key});
-  @override
-  State<DemoPage> createState() => _DemoPageState();
-}
-
-class _DemoPageState extends State<DemoPage> {
-  List<Map<String, String>> devices = [];
-  String? connectedAddress;
-  bool connected = false;
-  String buffer = '';
-  String received = '';
-  String lineEnding = '\n';
-  bool _reading = false;
-
-  Future<void> _ensure() async {
-    final ok = await FlutterBluetoothSerial.ensurePermissions();
-    if (!ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Permissões não concedidas')),
-      );
-    }
-  }
-
-  Future<void> _scan() async {
-    await _ensure();
-    final list = await FlutterBluetoothSerial.scanDevices();
-    setState(() => devices = list);
-  }
-
-  Future<void> _connect(String addr) async {
-    await _ensure();
-    final ok = await FlutterBluetoothSerial.connect(addr);
-    if (ok) {
-      setState(() {
-        connected = true;
-        connectedAddress = addr;
-      });
-      _readLoop();
-    }
-  }
-
-  Future<void> _disconnect() async {
-    await FlutterBluetoothSerial.disconnect();
-    setState(() {
-      connected = false;
-      connectedAddress = null;
-      _reading = false;
-    });
-  }
-
-  Future<void> _send(String text) async {
-    if (!connected) return;
-    await FlutterBluetoothSerial.write(text + lineEnding);
-  }
-
-  Future<void> _readLoop() async {
-    if (_reading) return;
-    _reading = true;
-    while (connected && _reading) {
-      final data = await FlutterBluetoothSerial.read();
-      if (data != null && data.isNotEmpty) {
-        buffer += data;
-        final idx = buffer.indexOf(lineEnding);
-        if (idx != -1) {
-          final msg = buffer.substring(0, idx).trim();
-          buffer = buffer.substring(idx + lineEnding.length);
-          setState(() => received = msg);
-        }
-      }
-      await Future.delayed(const Duration(milliseconds: 50));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Bluetooth Serial Android'),
-        actions: [
-          if (connected)
-            IconButton(onPressed: _disconnect, icon: const Icon(Icons.link_off))
-          else
-            IconButton(onPressed: _scan, icon: const Icon(Icons.refresh)),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView(
-              children: devices.map((d) {
-                final addr = d['address'] ?? '';
-                final isConn = addr == connectedAddress;
-                return ListTile(
-                  title: Text(d['name'] ?? 'Sem nome'),
-                  subtitle: Text(addr),
-                  tileColor: isConn ? Colors.lightBlue.withOpacity(0.25) : null,
-                  onTap: () => _connect(addr),
-                );
-              }).toList(),
-            ),
-          ),
-          const Divider(),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              children: [
-                const Text('Fim de linha:'),
-                const SizedBox(width: 8),
-                DropdownButton<String>(
-                  value: lineEnding,
-                  items: const [
-                    DropdownMenuItem(value: '\n', child: Text(r'\n')),
-                    DropdownMenuItem(value: '\r', child: Text(r'\r')),
-                    DropdownMenuItem(value: '\r\n', child: Text(r'\r\n')),
-                    DropdownMenuItem(value: '', child: Text('Nenhum')),
-                  ],
-                  onChanged: (v) => setState(() => lineEnding = v ?? '\n'),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: TextField(
-              decoration: const InputDecoration(
-                labelText: 'Mensagem',
-                border: OutlineInputBorder(),
-              ),
-              onSubmitted: _send,
-              enabled: connected,
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Text('Recebido: $received'),
-          ),
-        ],
-      ),
-    );
-  }
+```dart
+final devices = await FlutterBluetoothSerial.getPairedDevices();
+for (final d in devices) {
+  print("${d['name']} - ${d['address']}");
 }
 ```
 
+3️⃣ **Scan + evento de dispositivo encontrado**
+Quando usar: Descobrir dispositivos próximos.
+
+```dart
+FlutterBluetoothSerial.scanDevices().then((list) {
+  print("Scan terminou, encontrados: ${list.length}");
+});
+
+FlutterBluetoothSerial.onDeviceFound.listen((d) {
+  print("Encontrado: ${d['name']} - ${d['address']}");
+});
+```
+
+4️⃣ **Conectar (com UUID custom e timeout)**
+Quando usar: Conectar a um HC-05, ESP32, impressora, etc.
+
+```dart
+final ok = await FlutterBluetoothSerial.connect(
+  "00:22:11:AA:BB:CC",
+  uuid: "00001101-0000-1000-8000-00805F9B34FB",
+  timeoutMs: 300,
+);
+print(ok ? "Conectado" : "Falhou");
+```
+
+5️⃣ **Enviar dados (write)**
+Quando usar: Envio simples de comando ou texto.
+
+```dart
+await FlutterBluetoothSerial.write("LED_ON\n");
+```
+
+6️⃣ **Ler uma vez (`read()`)**
+Quando usar: Leitura pontual.
+
+```dart
+final data = await FlutterBluetoothSerial.read();
+print("Recebido: $data");
+```
+
+7️⃣ **Ler linha (`readLine()`) com delimitador**
+Quando usar: Quando o dispositivo envia linhas concluídas.
+
+```dart
+final line = await FlutterBluetoothSerial.readLine("\n");
+print("Linha: $line");
+```
+
+8️⃣ **Loop simples de leitura**
+Quando usar: Para monitorar continuamente.
+
+```dart
+bool reading = true;
+while (reading) {
+  final data = await FlutterBluetoothSerial.read();
+  if (data != null) print(">> $data");
+  await Future.delayed(const Duration(milliseconds: 50));
+}
+```
+
+9️⃣ **Desconectar**
+Quando usar: Finalizar sessão.
+
+```dart
+await FlutterBluetoothSerial.disconnect();
+print("Desconectado");
+
+```
+
+
 ---
 
-## 🔧 API do plugin
+## 🛠️ API do Plugin
 
-| Método                                                 | Descrição                                                                    |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `Future<bool> ensurePermissions()`                     | Verifica e solicita, se necessário, as permissões Bluetooth/Localização.     |
-| `Future<List<Map<String, String>>> getPairedDevices()` | Lista dispositivos já pareados (`name`, `address`).                          |
-| `Future<List<Map<String, String>>> scanDevices()`      | Busca dispositivos próximos. Também emite eventos "onDeviceFound" (interno). |
-| `Future<bool> connect(String address)`                 | Conecta via RFCOMM/Serial usando UUID SPP padrão.                            |
-| `Future<void> disconnect()`                            | Fecha a conexão atual.                                                       |
-| `Future<void> write(String message)`                   | Envia dados (assíncrono, não bloqueia a UI).                                 |
-| `Future<String?> read()`                               | Lê dados disponíveis (assíncrono). Retorna `null` se nada for recebido.      |
+| Método                                                                  | Descrição                                                                                               |
+|-------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
+| `Future<bool> ensurePermissions()`                                      | Verifica e solicita permissões de Bluetooth e Localização quando necessário.                            |
+| `Future<List<Map<String, String>>> getPairedDevices()`                  | Retorna uma lista de dispositivos pareados (`name`, `address`).                                         |
+| `Future<List<Map<String, String>>> scanDevices()`                       | Realiza busca (scan) e retorna a lista de dispositivos encontrados.                                     |
+| `Future<bool> connect(String address, {String uuid, int timeoutMs})`    | Conecta via RFCOMM/Serial. Suporta UUID customizado e timeout de leitura configurável.                  |
+| `Future<void> disconnect()`                                             | Desconecta do dispositivo atual e limpa buffers.                                                        |
+| `Future<void> write(String message)`                                    | Envia dados de forma assíncrona (não bloqueante).                                                       |
+| `Future<String?> read()`                                                | Lê até 1024 bytes de forma assíncrona. Retorna `null` em timeout ou se não houver dados.                |
+| `Future<String?> readLine([String delimiter = '\n'])`                   | Lê até receber uma linha completa (com base no delimitador). Retorna `null` em timeout.                 |
+
 
 ---
 
-## 📚 Boas práticas
+## 📚 Boas Práticas
 
-* Use delimitadores (`\n`, `\r`, `\r\n`) para identificar fim de mensagem.
-* Chame `ensurePermissions()` antes de `scan` ou `connect`.
-* Garanta que o Bluetooth esteja ligado.
-* Evite chamar `read()` na UI Thread.
-* Ao desconectar, pare loops de leitura.
+* Sempre chame `ensurePermissions()` antes de fazer `scan` ou `connect()` (o plugin já tenta solicitar automaticamente, mas é recomendado chamar no início do app).
+* Prefira usar leitura com delimitador (`readLine()`) quando possível — reduz necessidade de tratar buffers manualmente.
+* Se usar `read()` em loop, inclua um `delay` pequeno (ex: 30–80ms) para evitar alto consumo de CPU.
+* Utilize delimitadores (`\n`, `\r` ou `\r\n`) para identificar mensagens completas do dispositivo.
+* Se o dispositivo usa um UUID diferente do SPP padrão, passe o UUID customizado no `connect()`.
+* Ajuste o `timeoutMs` do `connect()` conforme o tempo que o dispositivo costuma demorar para responder.
+* Sempre pare loops de leitura **antes** de chamar `disconnect()`.
+* Use `disconnect()` para limpar buffer e fechar streams corretamente.
+* Evite chamar `read()` simultaneamente em vários locais — prefira um único loop central de leitura.
 
 ---
 
@@ -589,12 +469,17 @@ Lê até o tamanho do buffer (1024 bytes). Use delimitadores.
 
 ---
 
-## 🧠 Roadmap futuro
+## 🧠 Roadmap
 
-* Evento `onDataReceived` nativo (push)
-* Timeout configurável no `read()`
-* Buffer configurável
-* Reconexão automática
+### ✅ Concluído
+* Suporte a UUID customizado no `connect()`
+* `readLine(delimiter)` com buffer interno
+* Suporte a timeout no `connect(timeoutMs)`
+
+### 🚧 Em andamento / Planejado
+* Evento nativo `onDataReceived` (stream, sem precisar de loop manual)
+* Stream de status de conexão (onConnect / onDisconnect)
+
 
 ---
 

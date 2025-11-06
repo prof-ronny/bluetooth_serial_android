@@ -17,11 +17,36 @@ abstract class BluetoothSerialPlatform extends PlatformInterface {
   }
 
   /// Métodos que toda plataforma deve implementar
-  Future<List<Map<String, String>>> getPairedDevices();
-  Future<List<Map<String, String>>> scanDevices();
-  Future<bool> connect(String address);
-  Future<void> disconnect();
-  Future<void> write(String message);
-  Future<String?> read();
-  Future<bool> ensurePermissions();
+  Future<List<Map<String, String>>> getPairedDevices() {
+    throw UnimplementedError('getPairedDevices() has not been implemented.');
+  }
+
+  Future<List<Map<String, String>>> scanDevices() {
+    throw UnimplementedError('scanDevices() has not been implemented.');
+  }
+
+  Future<bool> connect(
+    String address, {
+    String uuid = "00001101-0000-1000-8000-00805F9B34FB",
+    int timeoutMs = 200,
+  });
+  Future<void> disconnect() {
+    throw UnimplementedError('disconnect() has not been implemented.');
+  }
+
+  Future<void> write(String message) {
+    throw UnimplementedError('write() has not been implemented.');
+  }
+
+  Future<String?> read() {
+    throw UnimplementedError('read() has not been implemented.');
+  }
+
+  Future<String?> readLine([String delimiter = "\n"]) {
+    throw UnimplementedError('readLine() has not been implemented.');
+  }
+
+  Future<bool> ensurePermissions() {
+    throw UnimplementedError('ensurePermissions() has not been implemented.');
+  }
 }
