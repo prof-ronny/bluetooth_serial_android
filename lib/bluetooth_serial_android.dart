@@ -1,48 +1,49 @@
 import 'bluetooth_serial_android_platform_interface.dart';
 
-/// API principal para comunicação Bluetooth Serial (RFCOMM) no Android.
+/// Main API for Bluetooth Serial (RFCOMM) communication on Android.
 ///
-/// Esta classe fornece métodos estáticos para solicitar permissões, listar
-/// dispositivos, buscar novos dispositivos, conectar, enviar e receber dados
-/// via Bluetooth Clássico.
+/// This class provides static methods to request permissions, list
+/// devices, discover new ones, connect, send, and receive data
+/// via Classic Bluetooth.
 class FlutterBluetoothSerial {
-  /// Verifica e solicita permissões necessárias para uso do Bluetooth no Android.
+  /// Checks and requests the necessary permissions for using Bluetooth on Android.
   ///
-  /// Retorna `true` caso as permissões já tenham sido concedidas
-  /// ou se o usuário as conceder após a solicitação.
+  /// Returns `true` if permissions have already been granted
+  /// or if the user grants them after the request.
   static Future<bool> ensurePermissions() {
     return BluetoothSerialPlatform.instance.ensurePermissions();
   }
 
-  /// Retorna a lista de dispositivos Bluetooth já pareados com o telefone.
+  /// Returns the list of Bluetooth devices already paired with the phone.
   ///
-  /// Cada item da lista contém:
-  /// * `name`: nome do dispositivo
+  /// Each item in the list contains:
+  /// * `name`: device name
   /// * `address`: MAC address
   static Future<List<Map<String, String>>> getPairedDevices() {
     return BluetoothSerialPlatform.instance.getPairedDevices();
   }
 
-  /// Inicia a busca (scan) por dispositivos Bluetooth próximos.
+  /// Starts scanning for nearby Bluetooth devices.
   ///
-  /// Quando dispositivos forem encontrados, o plugin poderá emitir eventos
-  /// através de `onDeviceFound` (dependendo da implementação da plataforma).
+  /// Each item in the list contains:
+  /// * `name`: device name
+  /// * `address`: MAC address
   ///
-  /// Retorna uma lista final de dispositivos ao concluir a busca.
+  /// Returns a final list of devices once the scan is complete.
   static Future<List<Map<String, String>>> scanDevices() {
     return BluetoothSerialPlatform.instance.scanDevices();
   }
 
-  /// Conecta a um dispositivo Bluetooth utilizando o endereço MAC informado.
+  /// Connects to a Bluetooth device using the provided MAC address.
   ///
-  /// [address] é obrigatório e deve ser o MAC Address do dispositivo (ex: `00:11:22:AA:BB:CC`).
+  /// [address] is required and must be the device's MAC Address (e.g. `00:11:22:AA:BB:CC`).
   ///
-  /// [uuid] permite definir um UUID customizado para dispositivos que não utilizam
-  /// o padrão SPP. Por padrão, usa o UUID `00001101-0000-1000-8000-00805F9B34FB`.
+  /// [uuid] allows setting a custom UUID for devices that do not use
+  /// the standard SPP. By default, it uses the UUID `00001101-0000-1000-8000-00805F9B34FB`.
   ///
-  /// [timeoutMs] define o tempo máximo de tentativa de conexão antes de gerar erro.
+  /// [timeoutMs] defines the maximum connection attempt time before throwing an error.
   ///
-  /// Retorna `true` caso a conexão seja bem-sucedida.
+  /// Returns `true` if the connection is successful.
   static Future<bool> connect(
     String address, {
     String uuid = "00001101-0000-1000-8000-00805F9B34FB",
@@ -55,35 +56,35 @@ class FlutterBluetoothSerial {
     );
   }
 
-  /// Encerra a conexão Bluetooth atual e libera recursos.
+  /// Ends the current Bluetooth connection and releases resources.
   static Future<void> disconnect() {
     return BluetoothSerialPlatform.instance.disconnect();
   }
 
-  /// Envia dados para o dispositivo conectado via Bluetooth.
+  /// Sends data to the connected Bluetooth device.
   ///
-  /// Não adiciona automaticamente quebras de linha.
-  /// Caso necessário, inclua `\n`, `\r` ou `\r\n` manualmente.
+  /// Does not automatically add line breaks.
+  /// If needed, include `\n`, `\r`, or `\r\n` manually.
   static Future<void> write(String message) {
     return BluetoothSerialPlatform.instance.write(message);
   }
 
-  /// Lê dados recebidos do dispositivo Bluetooth.
+  /// Reads data received from the Bluetooth device.
   ///
-  /// Retorna:
-  /// * String com dados recebidos
-  /// * `null` caso nenhum dado esteja disponível ou em timeout
+  /// Returns:
+  /// * String containing the received data
+  /// * `null` if no data is available or if a timeout occurs
   static Future<String?> read() {
     return BluetoothSerialPlatform.instance.read();
   }
 
-  /// Lê uma linha completa com base em um delimitador, como `\n`, `\r` ou `\r\n`.
+  /// Reads a complete line based on a delimiter such as `\n`, `\r`, or `\r\n`.
   ///
-  /// Útil para dispositivos que enviam mensagens finalizadas por caractere especial.
+  /// Useful for devices that send messages terminated by special characters.
   ///
-  /// Retorna:
-  /// * A linha sem o delimitador
-  /// * `null` caso ocorra timeout ou a linha não esteja completa ainda
+  /// Returns:
+  /// * The line without the delimiter
+  /// * `null` if a timeout occurs or if the line is not yet complete
   static Future<String?> readLine([String delimiter = "\n"]) {
     return BluetoothSerialPlatform.instance.readLine(delimiter);
   }

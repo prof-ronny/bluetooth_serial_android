@@ -5,7 +5,7 @@
 Flutter plugin for **Classic Bluetooth (Serial RFCOMM)** on **Android**.
 Allows listing paired devices, scanning nearby ones, connecting, sending, and receiving data over a serial (SPP) connection with non-blocking reads and automatic permission handling.
 
-> Developed by **Carlos Ronny de Sousa** for applications that require serial Bluetooth communication with devices such as HC-05/HC-06, ESP32, Arduinos, thermal printers, and other SPP modules.
+> Developed by **Carlos Ronny de Sousa** for applications that require serial Bluetooth communication with devices such as HC-05/HC-06 , JDY-31, ESP32, Arduino, Iot, thermal printers, and other SPP modules.
 
 ---
 
@@ -249,7 +249,7 @@ See the [LICENSE](LICENSE) file for details.
 Plugin Flutter para **Bluetooth Clássico (Serial RFCOMM)** no **Android**.
 Permite listar dispositivos pareados, buscar (scan), conectar, enviar e receber dados via porta serial (SPP) com leitura não bloqueante e gerenciamento automático de permissões.
 
-> Desenvolvido por **Carlos Ronny de Sousa** para aplicações que necessitam de comunicação serial Bluetooth com dispositivos como HC-05/HC-06, ESP32, Arduinos, impressoras térmicas e outros módulos SPP.
+> Desenvolvido por **Carlos Ronny de Sousa** para aplicações que necessitam de comunicação serial Bluetooth com dispositivos como HC-05/HC-06,JDY-31, ESP32, Arduino, Iot, impressoras térmicas e outros módulos SPP.
 
 ---
 

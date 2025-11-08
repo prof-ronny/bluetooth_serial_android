@@ -1,3 +1,11 @@
+## 1.1.2
+
+### 🇺🇸 Minor fixes
+- Minor improvements to package description and documentation, translation of the documentation into English
+
+### 🇧🇷 Correções menores
+- Pequenas melhorias na descrição do pacote e documentação, tradução da documentação para o inglês
+
 ## 1.1.1
 
 ### 🇧🇷 Correções menores
