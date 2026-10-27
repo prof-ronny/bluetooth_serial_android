@@ -18,6 +18,12 @@ import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.IOException
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.content.BroadcastReceiver
+import android.content.Intent
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.SocketTimeoutException
@@ -36,12 +42,59 @@ class BluetoothSerialAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHand
     private var output: OutputStream? = null
     private var readBuffer = StringBuilder()
     private var timeoutMs: Int = 200
+    private val readLock = Any()
+    private var readGeneration = 0L
+    private var pendingRead: MethodChannel.Result? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var discoveryReceiver: BroadcastReceiver? = null
+    private var discoveryResult: MethodChannel.Result? = null
+    private var discoveredDevices = mutableListOf<Map<String, String>>()
+    private var connectionReceiver: BroadcastReceiver? = null
+    @Volatile private var connecting = false
+
+    private fun finishDiscovery() {
+        val receiver = discoveryReceiver
+        discoveryReceiver = null
+        if (receiver != null) context?.unregisterReceiver(receiver)
+        val result = discoveryResult
+        discoveryResult = null
+        result?.success(discoveredDevices.toList())
+    }
+
+    private fun registerReceiver(receiver: BroadcastReceiver, filter: IntentFilter) {
+        val ctx = context ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ctx.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            ctx.registerReceiver(receiver, filter)
+        }
+    }
+
+    private fun watchConnection() {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                @Suppress("DEPRECATION")
+                val device = intent?.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+                val current = socket ?: return
+                if (intent?.action == BluetoothDevice.ACTION_ACL_DISCONNECTED &&
+                    device?.address == current.remoteDevice.address) {
+                    val address = device.address
+                    disconnect()
+                    channel.invokeMethod("onDisconnected", mapOf("address" to address))
+                }
+            }
+        }
+        connectionReceiver = receiver
+        registerReceiver(receiver, IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED))
+    }
 
     override fun onAttachedToEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(binding.binaryMessenger, "bluetooth_serial_android")
         channel.setMethodCallHandler(this)
         context = binding.applicationContext
         adapter = (context?.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+        watchConnection()
     }
 
     // ========================================================
@@ -52,6 +105,20 @@ class BluetoothSerialAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHand
             "ensurePermissions" -> ensurePermissions(result)
             "getPairedDevices" -> getPairedDevices(result)
             "scanDevices" -> scanDevices(result)
+            "cancelDiscovery" -> {
+                try {
+                    finishDiscovery()
+                    val ctx = context
+                    val canScan = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                        (ctx != null && ContextCompat.checkSelfPermission(
+                            ctx, Manifest.permission.BLUETOOTH_SCAN
+                        ) == PackageManager.PERMISSION_GRANTED)
+                    if (canScan && adapter?.isDiscovering == true) adapter?.cancelDiscovery()
+                    result.success(null)
+                } catch (e: Exception) {
+                    result.error("DISCOVERY_CANCEL_FAILED", e.message, null)
+                }
+            }
             "connect" -> {
                 val address = call.argument<String>("address")
                 val uuidStr = call.argument<String>("uuid") ?: "00001101-0000-1000-8000-00805F9B34FB"
@@ -66,7 +133,11 @@ class BluetoothSerialAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHand
                 val message = call.argument<String>("message") ?: ""
                 write(message, result)
             }
-            "read" -> read(result)
+            "read" -> read(call.argument<Int>("timeoutMs") ?: 200, result)
+            "cancelRead" -> {
+                cancelRead()
+                result.success(null)
+            }
             "readLine" -> {
                 val delimiter = call.argument<String>("delimiter") ?: "\n"
                 readLine(delimiter, result)
@@ -78,6 +149,23 @@ class BluetoothSerialAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHand
     // ========================================================
     //                  PERMISSÕES
     // ========================================================
+    private fun requiredPermissionsForScan(): List<String> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            listOf(
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_SCAN
+            )
+        } else {
+            listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+    }
+
+    private fun missingPermissions(ctx: Context, permissions: List<String>): List<String> {
+        return permissions.filter {
+            ContextCompat.checkSelfPermission(ctx, it) != PackageManager.PERMISSION_GRANTED
+        }
+    }
+
     private fun ensurePermissions(result: MethodChannel.Result) {
         val act = activity
         val ctx = context
@@ -86,16 +174,7 @@ class BluetoothSerialAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHand
             return
         }
 
-        val requiredPermissions = listOf(
-            Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.BLUETOOTH_SCAN,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        )
-
-        val missingPermissions = requiredPermissions.filter {
-            ContextCompat.checkSelfPermission(ctx, it) != PackageManager.PERMISSION_GRANTED
-        }
-
+        val missingPermissions = missingPermissions(ctx, requiredPermissionsForScan())
         if (missingPermissions.isEmpty()) {
             result.success(true)
             return
@@ -128,29 +207,29 @@ class BluetoothSerialAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHand
         val act = activity ?: return result.error("NO_ACTIVITY", "Activity ausente", null)
         val adapter = adapter ?: return result.error("NO_ADAPTER", "Bluetooth não suportado", null)
 
-        val hasScan = ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_SCAN) ==
-                PackageManager.PERMISSION_GRANTED
-        val hasLoc = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) ==
-                PackageManager.PERMISSION_GRANTED
-
-        if (!hasScan || !hasLoc) {
-            ActivityCompat.requestPermissions(
-                act,
-                arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.ACCESS_FINE_LOCATION),
-                1001
-            )
+        val missingPermissions = missingPermissions(ctx, requiredPermissionsForScan())
+        if (missingPermissions.isNotEmpty()) {
+            ActivityCompat.requestPermissions(act, missingPermissions.toTypedArray(), 1001)
             result.error("NO_PERMISSION", "Permissões não concedidas", null)
             return
         }
 
+        if (discoveryResult != null) {
+            result.error("DISCOVERY_IN_PROGRESS", "A descoberta já está em andamento", null)
+            return
+        }
         val devicesFound = mutableListOf<Map<String, String>>()
 
         val receiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: android.content.Intent?) {
                 val action = intent?.action
                 if (BluetoothDevice.ACTION_FOUND == action) {
-                    val device: BluetoothDevice? =
+                    @Suppress("DEPRECATION")
+                    val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                    } else {
+                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                    }
                     if (device != null) {
                         val map = mapOf(
                             "name" to (device.name ?: "Desconhecido"),
@@ -162,8 +241,7 @@ class BluetoothSerialAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHand
                         }
                     }
                 } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED == action) {
-                    ctx.unregisterReceiver(this)
-                    result.success(devicesFound)
+                    finishDiscovery()
                 }
             }
         }
@@ -171,13 +249,29 @@ class BluetoothSerialAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHand
         val filter = IntentFilter()
         filter.addAction(BluetoothDevice.ACTION_FOUND)
         filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
-        ctx.registerReceiver(receiver, filter)
-
+        // Bluetooth events can come from a privileged system
+        // process, so Android 13+ requires RECEIVER_EXPORTED.
         if (adapter.isDiscovering) adapter.cancelDiscovery()
-        val started = adapter.startDiscovery()
-        if (!started) {
-            ctx.unregisterReceiver(receiver)
-            result.error("DISCOVERY_FAILED", "Não foi possível iniciar o scan", null)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ctx.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            ctx.registerReceiver(receiver, filter)
+        }
+
+        discoveryReceiver = receiver
+        discoveryResult = result
+        discoveredDevices = devicesFound
+        try {
+            if (!adapter.startDiscovery()) {
+                discoveryResult = null
+                finishDiscovery()
+                result.error("DISCOVERY_FAILED", "Não foi possível iniciar o scan", null)
+            }
+        } catch (e: Exception) {
+            discoveryResult = null
+            finishDiscovery()
+            result.error("DISCOVERY_FAILED", e.message, null)
         }
     }
 
@@ -185,28 +279,54 @@ class BluetoothSerialAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHand
     //                  CONECTAR A UM DISPOSITIVO
     // ========================================================
     private fun connect(address: String?, uuidStr: String, timeoutMs: Int, result: MethodChannel.Result) {
-        if (address == null) {
+        if (address == null || !BluetoothAdapter.checkBluetoothAddress(address)) {
             result.error("INVALID_ADDRESS", "Endereço Bluetooth inválido", null)
             return
         }
-
-        this.timeoutMs = timeoutMs
-
+        if (connecting || socket != null) {
+            result.error("CONNECTION_IN_PROGRESS", "Desconecte a sessão atual primeiro", null)
+            return
+        }
+        val currentAdapter = adapter ?: return result.error("NO_ADAPTER", "Bluetooth indisponível", null)
+        val pending: BluetoothSocket
+        try {
+            pending = currentAdapter.getRemoteDevice(address)
+                .createRfcommSocketToServiceRecord(UUID.fromString(uuidStr))
+        } catch (e: Exception) {
+            result.error("CONNECTION_FAILED", e.message, null)
+            return
+        }
+        connecting = true
+        socket = pending
+        val timeout = Runnable {
+            try { pending.close() } catch (_: IOException) { }
+        }
+        mainHandler.postDelayed(timeout, timeoutMs.coerceAtLeast(1000).toLong())
         thread {
             try {
-                val device: BluetoothDevice? = adapter?.getRemoteDevice(address)
-                val uuid = UUID.fromString(uuidStr)
-
-                socket = device?.createRfcommSocketToServiceRecord(uuid)
-                adapter?.cancelDiscovery()
-                socket?.connect()
-
-                input = socket?.inputStream
-                output = socket?.outputStream
-
-                activity?.runOnUiThread { result.success(true) }
-            } catch (e: IOException) {
-                activity?.runOnUiThread { result.error("CONNECTION_FAILED", e.message, null) }
+                pending.connect()
+                val connectedInput = pending.inputStream
+                val connectedOutput = pending.outputStream
+                mainHandler.post {
+                    mainHandler.removeCallbacks(timeout)
+                    connecting = false
+                    if (socket === pending && pending.isConnected) {
+                        input = connectedInput
+                        output = connectedOutput
+                        result.success(true)
+                    } else {
+                        try { pending.close() } catch (_: IOException) { }
+                        result.error("CONNECTION_FAILED", "Conexão cancelada", null)
+                    }
+                }
+            } catch (e: Exception) {
+                try { pending.close() } catch (_: IOException) { }
+                mainHandler.post {
+                    mainHandler.removeCallbacks(timeout)
+                    connecting = false
+                    if (socket === pending) disconnect()
+                    result.error("CONNECTION_FAILED", e.message, null)
+                }
             }
         }
     }
@@ -215,26 +335,41 @@ class BluetoothSerialAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHand
     //                  DESCONECTAR
     // ========================================================
     private fun disconnect() {
-        try {
-            input?.close()
-            output?.close()
-            socket?.close()
-            readBuffer.clear()
-        } catch (e: IOException) {
-            e.printStackTrace()
-        }
+        cancelRead()
+        val current = socket
+        socket = null
+        input = null
+        output = null
+        readBuffer.clear()
+        try { current?.close() } catch (_: IOException) { }
     }
 
     // ========================================================
     //                  ESCRITA (ASSÍNCRONA)
     // ========================================================
     private fun write(message: String, result: MethodChannel.Result) {
+        val current = socket
+        val stream = output
+        if (current == null || stream == null) {
+            result.error("NOT_CONNECTED", "Nenhuma conexão ativa", null)
+            return
+        }
         thread {
             try {
-                output?.write(message.toByteArray())
-                activity?.runOnUiThread { result.success(true) }
+                synchronized(stream) {
+                    stream.write(message.toByteArray(Charsets.UTF_8))
+                    stream.flush()
+                }
+                mainHandler.post { result.success(true) }
             } catch (e: IOException) {
-                activity?.runOnUiThread { result.error("WRITE_ERROR", e.message, null) }
+                mainHandler.post {
+                    if (socket === current) {
+                        val address = current.remoteDevice.address
+                        disconnect()
+                        channel.invokeMethod("onDisconnected", mapOf("address" to address))
+                    }
+                    result.error("WRITE_ERROR", e.message, null)
+                }
             }
         }
     }
@@ -242,24 +377,63 @@ class BluetoothSerialAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHand
     // ========================================================
     //                  LEITURA (ASSÍNCRONA)
     // ========================================================
-    private fun read(result: MethodChannel.Result) {
+    private fun cancelRead() {
+        // The lock also protects the last check immediately before input.read,
+        // so an old worker cannot consume a new transaction after cancellation.
+        synchronized(readLock) { readGeneration++ }
+        val previous = pendingRead
+        pendingRead = null
+        previous?.success(null)
+    }
+
+    private fun read(waitMs: Int, result: MethodChannel.Result) {
+        if (pendingRead != null) {
+            result.error("READ_BUSY", "Another read is still pending", null)
+            return
+        }
+        val current = socket
+        val stream = input
+        if (current == null || stream == null) {
+            result.error("NOT_CONNECTED", "No active Bluetooth connection", null)
+            return
+        }
+        pendingRead = result
+        val generation = synchronized(readLock) { ++readGeneration }
+        fun finish(data: String? = null, error: String? = null) {
+            mainHandler.post {
+                if (pendingRead === result) {
+                    pendingRead = null
+                    if (error == null) result.success(data)
+                    else result.error("READ_ERROR", error, null)
+                }
+            }
+        }
         thread {
             try {
                 val buffer = ByteArray(1024)
-                val start = System.currentTimeMillis()
-                while (System.currentTimeMillis() - start < timeoutMs) {
-                    val available = input?.available() ?: 0
-                    if (available > 0) {
-                        val bytesRead = input!!.read(buffer, 0, available)
-                        val data = String(buffer, 0, bytesRead)
-                        activity?.runOnUiThread { result.success(data) }
+                val start = SystemClock.elapsedRealtime()
+                while (SystemClock.elapsedRealtime() - start < waitMs.coerceIn(1, 5000)) {
+                    val data = synchronized(readLock) {
+                        if (generation != readGeneration) return@thread
+                        if (socket !== current || input !== stream) {
+                            throw IOException("Bluetooth connection changed during read")
+                        }
+                        val available = stream.available().coerceAtMost(buffer.size)
+                        if (available > 0) {
+                            val bytesRead = stream.read(buffer, 0, available)
+                            if (bytesRead < 0) throw IOException("Bluetooth stream closed")
+                            String(buffer, 0, bytesRead, Charsets.US_ASCII)
+                        } else null
+                    }
+                    if (data != null) {
+                        finish(data)
                         return@thread
                     }
                     Thread.sleep(10)
                 }
-                activity?.runOnUiThread { result.success(null) } // timeout sem dados
+                finish()
             } catch (e: IOException) {
-                activity?.runOnUiThread { result.error("READ_ERROR", e.message, null) }
+                finish(error = e.message ?: "Bluetooth read failed")
             }
         }
     }
@@ -321,6 +495,10 @@ class BluetoothSerialAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHand
     }
 
     override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
+        finishDiscovery()
+        connectionReceiver?.let { context?.unregisterReceiver(it) }
+        connectionReceiver = null
+        disconnect()
         channel.setMethodCallHandler(null)
     }
 }
